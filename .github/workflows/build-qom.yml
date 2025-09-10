@@ -40,13 +40,20 @@ jobs:
             sudo apt-get install -y git gcc g++ make libusb-1.0-0-dev libsecp256k1-dev
             if [ "${{ matrix.goarch }}" = "arm64" ]; then
               sudo dpkg --add-architecture arm64
+              # Fix 404: Limit updates/security/backports to amd64
+              sudo sed -i '/deb http:\/\/security.ubuntu.com\/ubuntu noble-security/s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+              sudo sed -i '/deb http:\/\/archive.ubuntu.com\/ubuntu noble-updates/s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+              sudo sed -i '/deb http:\/\/archive.ubuntu.com\/ubuntu noble-backports/s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+              # Use ports for arm64 main/universe
+              echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe" | sudo tee -a /etc/apt/sources.list
+              echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe" | sudo tee -a /etc/apt/sources.list
               sudo apt-get update
               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libusb-1.0-0-dev:arm64 libsecp256k1-dev:arm64
-              export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+              export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
             fi
           elif [ "${{ matrix.goos }}" = "darwin" ]; then
             brew install libusb secp256k1
-            if [ "${{ matrix.goarch }}" = "amd64" ] && [ "$(uname -m)" = "arm64" ]; then  # Solo si cross en arm64 host
+            if [ "${{ matrix.goarch }}" = "amd64" ] && [ "$(uname -m)" = "arm64" ]; then
               arch -x86_64 brew install libusb secp256k1
             fi
           elif [ "${{ matrix.goos }}" = "windows" ]; then
@@ -61,7 +68,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.19'
 
       - name: Clone QomApp
         run: git clone https://github.com/QOM-One/QomApp
@@ -89,7 +96,7 @@ jobs:
             export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
             export MACOSX_DEPLOYMENT_TARGET=13.0
           fi
-          # Build del paquete completo (no solo main.go)
+          # Build
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -tags "netgo ledger" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo,ledger -w -s" -trimpath -o build/qomd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/qomd || echo "Build failed with exit code $?"
           # Verifica
           ls -l build/
