@@ -46,7 +46,7 @@ jobs:
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: qomd-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ~/go/bin/qomd*
