@@ -26,18 +26,18 @@ jobs:
             goarch: amd64
       fail-fast: false
     env:
-      CGO_ENABLED: 1  # Necesario para -tags ledger
+      CGO_ENABLED: 1
     steps:
       - name: Install dependencies
         run: |
           if [ "${{ matrix.goos }}" = "linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y git gcc g++ make gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libusb-1.0-0-dev libsecp256k1-dev
+            sudo apt-get install -y git gcc g++ make gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libusb-1.0-0-dev libsecp256k1-dev
           elif [ "${{ matrix.goos }}" = "darwin" ]; then
             brew install libusb secp256k1
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             sudo apt-get update
-            sudo apt-get install -y git gcc make mingw-w64
+            sudo apt-get install -y git gcc g++ make mingw-w64
           fi
 
       - name: Setup Go
@@ -60,23 +60,28 @@ jobs:
           if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
             export CC=aarch64-linux-gnu-gcc
             export CXX=aarch64-linux-gnu-g++
+            export GOARM=7  # Para ARM64 compat
           fi
           if [ "${{ matrix.goos }}" = "windows" ]; then
             export CC=x86_64-w64-mingw32-gcc
             export CXX=x86_64-w64-mingw32-g++
           fi
-          # Para darwin, usa CC nativo (clang)
+          if [ "${{ matrix.goos }}" = "darwin" ] && [ "${{ matrix.goarch }}" = "amd64" ]; then
+            export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+            export MACOSX_DEPLOYMENT_TARGET=13.0  # Para evitar -no_pie deprecated
+          fi
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install LEDGER_ENABLED=true || \
           (cd cmd/qomd && GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -tags "netgo ledger" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo,ledger -w -s" -o qomd${{ matrix.goos == 'windows' && '.exe' || '' }} ./...)
-          ls -l ~/go/bin/qomd* || ls -l qomd* || true
+          # Verifica paths alternativos
+          ls -l $GOPATH/bin/qomd* || ls -l ~/go/bin/qomd* || ls -l cmd/qomd/qomd* || ls -l qomd* || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: qomd-ledger-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            ~/go/bin/qomd
-            ~/go/bin/qomd.exe
-            QomApp/qomd
-            QomApp/qomd.exe
+            ~/go/bin/qomd*
+            $GOPATH/bin/qomd*
+            QomApp/cmd/qomd/qomd*
+            QomApp/qomd*
           retention-days: 5
