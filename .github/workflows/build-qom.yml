@@ -1,4 +1,4 @@
-name: Build QOM
+name: Build QOM with Ledger Support
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.goos == 'darwin' && 'macos-latest' || 'ubuntu-latest' }}
     strategy:
       matrix:
         include:
@@ -24,16 +24,21 @@ jobs:
             goarch: arm64
           - goos: windows
             goarch: amd64
-          # Excluimos windows-arm64 por ser raro y propenso a fallos
-      fail-fast: false  # Evita cancelación en cadena
+      fail-fast: false
     env:
-      CGO_ENABLED: 1  # Habilita CGO para secp256k1
+      CGO_ENABLED: 1  # Necesario para -tags ledger
     steps:
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git gcc make gcc-aarch64-linux-gnu libsecp256k1-dev
-          # libsecp256k1-dev para funciones secp256k1; gcc-aarch64 para ARM
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y git gcc make gcc-aarch64-linux-gnu libusb-1.0-0-dev libsecp256k1-dev
+          elif [ "${{ matrix.goos }}" = "darwin" ]; then
+            brew install libusb libsecp256k1
+          elif [ "${{ matrix.goos }}" = "windows" ]; then
+            sudo apt-get update
+            sudo apt-get install -y git gcc make mingw-w64
+          fi
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -46,21 +51,19 @@ jobs:
       - name: Install Go dependencies
         run: |
           cd QomApp
-          go mod tidy  # Asegura que dependencias como secp256k1 estén resueltas
+          go mod tidy
 
-      - name: Build binary
+      - name: Build binary with ledger
         run: |
           cd QomApp
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install || \
-          # Fallback si make install falla
-          (cd cmd/qomd && GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o qomd${{ matrix.goos == 'windows' && '.exe' || '' }} ./...)
-          # Verifica binario
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install LEDGER_ENABLED=true || \
+          (cd cmd/qomd && GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -tags "netgo ledger" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo,ledger -w -s" -o qomd${{ matrix.goos == 'windows' && '.exe' || '' }} ./...)
           ls -l ~/go/bin/qomd* || ls -l qomd* || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qomd-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: qomd-ledger-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             ~/go/bin/qomd
             ~/go/bin/qomd.exe
