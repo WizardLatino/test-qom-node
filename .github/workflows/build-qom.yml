@@ -1,14 +1,19 @@
+# Workflow to build QOM node binaries with Ledger support for multiple platforms
+# and attach them to GitHub Releases on tag push.
 name: Build QOM with Ledger Support
 
 on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'  # Trigger release job on tags like v1.0.0
   pull_request:
     branches:
       - main
 
 jobs:
+  # Build job: Compiles QOM binary for each platform/architecture
   build:
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -17,44 +22,40 @@ jobs:
           - goos: linux
             goarch: amd64
             runner: ubuntu-latest
+            ledger_enabled: true  # Enable Ledger support (requires CGO)
           - goos: linux
             goarch: arm64
             runner: ubuntu-latest
+            ledger_enabled: false  # Disable Ledger support (CGO disabled to avoid dependency issues)
           - goos: darwin
             goarch: amd64
             runner: macos-13
+            ledger_enabled: true
           - goos: darwin
             goarch: arm64
             runner: macos-latest
+            ledger_enabled: true
           - goos: windows
             goarch: amd64
             runner: ubuntu-latest
-      fail-fast: false
+            ledger_enabled: true
+      fail-fast: false  # Allow all builds to run even if one fails
     env:
-      CGO_ENABLED: 1
+      CGO_ENABLED: ${{ matrix.ledger_enabled == false && '0' || '1' }}  # Disable CGO for linux-arm64, enable for others
     steps:
+      # Install dependencies required for CGO (libusb, secp256k1) and cross-compilation
       - name: Install dependencies
         run: |
           if [ "${{ matrix.goos }}" = "linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y git gcc g++ make libusb-1.0-0-dev libsecp256k1-dev
-            if [ "${{ matrix.goarch }}" = "arm64" ]; then
-              sudo dpkg --add-architecture arm64
-              # Fix 404: Limit updates/security/backports to amd64
-              sudo sed -i '/deb http:\/\/security.ubuntu.com\/ubuntu noble-security/s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-              sudo sed -i '/deb http:\/\/archive.ubuntu.com\/ubuntu noble-updates/s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-              sudo sed -i '/deb http:\/\/archive.ubuntu.com\/ubuntu noble-backports/s/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-              # Use ports for arm64 main/universe
-              echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe" | sudo tee -a /etc/apt/sources.list
-              echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe" | sudo tee -a /etc/apt/sources.list
-              sudo apt-get update
-              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libusb-1.0-0-dev:arm64 libsecp256k1-dev:arm64
-              export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
-            fi
+            sudo apt-get install -y git gcc g++ make
+            if [ "${{ matrix.goarch }}" = "amd64" ]; then
+              sudo apt-get install -y libusb-1.0-0-dev libsecp256k1-dev
+            fi  # No CGO deps for arm64 since ledger_enabled=false
           elif [ "${{ matrix.goos }}" = "darwin" ]; then
             brew install libusb secp256k1
             if [ "${{ matrix.goarch }}" = "amd64" ] && [ "$(uname -m)" = "arm64" ]; then
-              arch -x86_64 brew install libusb secp256k1
+              arch -x86_64 brew install libusb secp256k1  # Install x86_64 libs for cross-compilation
             fi
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             sudo apt-get update
@@ -65,29 +66,28 @@ jobs:
             export PKG_CONFIG_PATH=$PWD/vcpkg/installed/x64-mingw-static/lib/pkgconfig
           fi
 
+      # Set up Go environment with version 1.19 for compatibility
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.19'
 
+      # Clone the QomApp repository
       - name: Clone QomApp
         run: git clone https://github.com/QOM-One/QomApp
 
+      # Install Go dependencies
       - name: Install Go dependencies
         run: |
           cd QomApp
           go mod tidy
 
-      - name: Build binary with ledger
+      # Build the QOM binary with or without Ledger support
+      - name: Build binary
         run: |
           cd QomApp
           mkdir -p build
-          # Configuración cross
-          if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
-            export CC=aarch64-linux-gnu-gcc
-            export CXX=aarch64-linux-gnu-g++
-            export GOARM=7
-          fi
+          # Configure cross-compilation for Windows and macOS-amd64
           if [ "${{ matrix.goos }}" = "windows" ]; then
             export CC=x86_64-w64-mingw32-gcc
             export CXX=x86_64-w64-mingw32-g++
@@ -96,14 +96,46 @@ jobs:
             export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
             export MACOSX_DEPLOYMENT_TARGET=13.0
           fi
-          # Build
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -tags "netgo ledger" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo,ledger -w -s" -trimpath -o build/qomd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/qomd || echo "Build failed with exit code $?"
-          # Verifica
+          # Build with Ledger support for most platforms, without for linux-arm64
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -tags "${{ matrix.ledger_enabled == false && 'netgo' || 'netgo ledger' }}" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=${{ matrix.ledger_enabled == false && 'netgo' || 'netgo,ledger' }} -w -s" -trimpath -o build/qomd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ledger_enabled == false && '-noledger' || '' }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/qomd || echo "Build failed with exit code $?"
+          # List build directory contents for verification
           ls -l build/
 
+      # Upload the binary as an artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qomd-ledger-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: qomd${{ matrix.ledger_enabled == false && '-noledger' || '-ledger' }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: QomApp/build/qomd-*
           retention-days: 5
+
+  # Release job: Creates a GitHub Release and attaches binaries on tag push
+  release:
+    runs-on: ubuntu-latest
+    needs: build  # Depends on build jobs completing
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')  # Only run on tag push
+    permissions:
+      contents: write  # Required to create releases and upload assets
+    steps:
+      # Download all artifacts from build jobs
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts  # Downloads to ./artifacts
+
+      # Create or update a GitHub Release and attach binaries
+      - name: Create or update release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "artifacts/qomd-*/qomd-*"  # Include all binaries (ledger and noledger)
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}  # Use tag name (e.g., v1.0.0)
+          name: Release ${{ github.ref_name }}
+          body: |
+            Binaries for QOM node with Ledger support for multiple platforms.
+            Note: linux-arm64 build does not include Ledger support due to dependency issues.
+          draft: false
+          prerelease: false
+          allowUpdates: true  # Allow updating existing release
+          artifactErrorsFailBuild: true  # Fail if assets cannot be uploaded
+          
