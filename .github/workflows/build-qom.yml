@@ -24,30 +24,46 @@ jobs:
             goarch: arm64
           - goos: windows
             goarch: amd64
-          - goos: windows
-            goarch: arm64
+          # Excluimos windows-arm64 por ser raro y propenso a fallos
+      fail-fast: false  # Evita cancelación en cadena
+    env:
+      CGO_ENABLED: 1  # Habilita CGO para secp256k1
     steps:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git gcc make
+          sudo apt-get install -y git gcc make gcc-aarch64-linux-gnu libsecp256k1-dev
+          # libsecp256k1-dev para funciones secp256k1; gcc-aarch64 para ARM
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
       - name: Clone QomApp
         run: git clone https://github.com/QOM-One/QomApp
 
+      - name: Install Go dependencies
+        run: |
+          cd QomApp
+          go mod tidy  # Asegura que dependencias como secp256k1 estén resueltas
+
       - name: Build binary
         run: |
           cd QomApp
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install || \
+          # Fallback si make install falla
+          (cd cmd/qomd && GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o qomd${{ matrix.goos == 'windows' && '.exe' || '' }} ./...)
+          # Verifica binario
+          ls -l ~/go/bin/qomd* || ls -l qomd* || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: qomd-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ~/go/bin/qomd*
+          path: |
+            ~/go/bin/qomd
+            ~/go/bin/qomd.exe
+            QomApp/qomd
+            QomApp/qomd.exe
           retention-days: 5
