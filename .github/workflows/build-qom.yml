@@ -16,19 +16,19 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            runner: ubuntu-latest  # amd64 nativo
+            runner: ubuntu-latest
           - goos: linux
             goarch: arm64
-            runner: ubuntu-latest  # Cross; agregar libs cross
+            runner: ubuntu-latest
           - goos: darwin
             goarch: amd64
-            runner: macos-13  # amd64 nativo (Intel)
+            runner: macos-13
           - goos: darwin
             goarch: arm64
-            runner: macos-latest  # arm64 nativo (Apple Silicon)
+            runner: macos-latest
           - goos: windows
             goarch: amd64
-            runner: ubuntu-latest  # Cross; usar MinGW
+            runner: ubuntu-latest
       fail-fast: false
     env:
       CGO_ENABLED: 1
@@ -39,17 +39,19 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y git gcc g++ make libusb-1.0-0-dev libsecp256k1-dev
             if [ "${{ matrix.goarch }}" = "arm64" ]; then
-              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libusb-1.0-dev-arm64-cross libsecp256k1-dev-arm64-cross  # Libs cross para arm64
+              sudo dpkg --add-architecture arm64
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libusb-1.0-0-dev:arm64 libsecp256k1-dev:arm64
+              export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
             fi
           elif [ "${{ matrix.goos }}" = "darwin" ]; then
             brew install libusb secp256k1
-            if [ "${{ matrix.goarch }}" = "amd64" ]; then
-              arch -x86_64 brew install libusb secp256k1  # Usa Rosetta para libs amd64
+            if [ "${{ matrix.goarch }}" = "amd64" ] && [ "$(uname -m)" = "arm64" ]; then  # Solo si cross en arm64 host
+              arch -x86_64 brew install libusb secp256k1
             fi
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             sudo apt-get update
             sudo apt-get install -y git gcc g++ make mingw-w64
-            # Instala libs cross para Windows (usa vcpkg o manual)
             git clone https://github.com/microsoft/vcpkg
             ./vcpkg/bootstrap-vcpkg.sh
             ./vcpkg/vcpkg install libusb:x64-mingw-static secp256k1:x64-mingw-static
@@ -59,7 +61,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'  # Actualiza para mejor soporte cross
+          go-version: '1.23'
 
       - name: Clone QomApp
         run: git clone https://github.com/QOM-One/QomApp
@@ -87,8 +89,8 @@ jobs:
             export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
             export MACOSX_DEPLOYMENT_TARGET=13.0
           fi
-          # Siempre usa go build para consistencia, con output fijo
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -tags "netgo ledger" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo,ledger -w -s" -trimpath -o build/qomd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} cmd/qomd/main.go || echo "Build failed with exit code $?"
+          # Build del paquete completo (no solo main.go)
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -tags "netgo ledger" -ldflags "-X github.com/cosmos/cosmos-sdk/version.Name=qom -X github.com/cosmos/cosmos-sdk/version.AppName=qomd -X github.com/cosmos/cosmos-sdk/version.Version=1.0.0 -X github.com/cosmos/cosmos-sdk/version.Commit=189c0ac36652331df6995859b18b747955a4ebda -X github.com/tendermint/tendermint/version.TMCoreSemVer=v0.34.27 -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo,ledger -w -s" -trimpath -o build/qomd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/qomd || echo "Build failed with exit code $?"
           # Verifica
           ls -l build/
 
