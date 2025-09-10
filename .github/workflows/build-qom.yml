@@ -1,0 +1,53 @@
+name: Build QOM
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git gcc make
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Clone QomApp
+        run: git clone https://github.com/QOM-One/QomApp
+
+      - name: Build binary
+        run: |
+          cd QomApp
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make install
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: qomd-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ~/go/bin/qomd*
+          retention-days: 5
