@@ -1,6 +1,6 @@
 module github.com/qom-one/qomapp/v1
 
-go 1.19
+go 1.23
 
 require (
 	cosmossdk.io/errors v1.0.0-beta.7
@@ -43,7 +43,7 @@ require (
 	golang.org/x/text v0.8.0
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f
 	google.golang.org/grpc v1.54.0
-	google.golang.org/protobuf v1.30.0
+	google.golang.org/protobuf v1.36.9
 	sigs.k8s.io/yaml v1.3.0
 )
 
